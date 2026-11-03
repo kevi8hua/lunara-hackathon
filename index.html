@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lunara — Your own universe</title>
+<meta name="description" content="A calm, private-by-default prototype that turns a memory, written in your own words, into a personal constellation. Everything stays in your browser.">
+<style>
+  :root { color-scheme: dark; --ink:#eef2ff; --dim:#aab3d6; --line:#2a335e; --card:#0d1330cc; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; font-family: system-ui, -apple-system, Segoe UI, sans-serif; color:var(--ink);
+    background: radial-gradient(1200px 600px at 80% -10%, #24306b, transparent 60%), #050816; }
+  header, main, footer { max-width: 980px; margin: 0 auto; padding: 24px 20px; }
+  h1 { font-size: clamp(2rem, 6vw, 3.4rem); line-height:1.05; margin: 12px 0 8px; font-weight: 650; letter-spacing:-.02em; }
+  p.lede { color: var(--dim); font-size: 1.05rem; line-height:1.6; max-width: 640px; }
+  .grid { display:grid; grid-template-columns: 1fr; gap: 20px; }
+  @media (min-width: 820px) { .grid { grid-template-columns: 360px 1fr; } }
+  .card { background: var(--card); border:1px solid var(--line); border-radius: 18px; padding: 18px; }
+  label { display:block; font-size:.9rem; color:var(--dim); margin: 12px 0 6px; }
+  textarea, input { width:100%; background:#070b22; color:var(--ink); border:1px solid var(--line); border-radius:12px; padding:12px; font:inherit; }
+  textarea { min-height: 110px; resize: vertical; }
+  button { cursor:pointer; border:0; border-radius:999px; padding:11px 18px; font:inherit; font-weight:650; background:#dfe6ff; color:#0b1030; margin: 14px 8px 0 0; }
+  button.secondary { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  button:focus-visible, textarea:focus-visible, input:focus-visible, li:focus-visible { outline: 3px solid #8fb0ff; outline-offset: 2px; }
+  canvas { width:100%; height: 420px; display:block; background:#04061a; border-radius:14px; border:1px solid var(--line); }
+  .story { line-height:1.65; font-size:1.05rem; }
+  .meta { color:var(--dim); font-size:.9rem; }
+  ul.memories { list-style:none; padding:0; margin:12px 0 0; display:grid; gap:8px; }
+  ul.memories li { border:1px solid var(--line); border-radius:12px; padding:10px 12px; cursor:pointer; background:#0a0f2a; }
+  ul.memories li:hover { border-color:#7d90e8; }
+  .small { font-size:.88rem; color:var(--dim); line-height:1.55; }
+</style>
+</head>
+<body>
+<header>
+  <div class="meta">LUNARA &middot; BUILD FOR YOUR WORLD &middot; HACKATHON PROTOTYPE</div>
+  <h1>Your own universe,<br>made from your words.</h1>
+  <p class="lede">Write down a memory. Lunara turns it into a constellation you can revisit —
+  calmly, privately, and entirely on this device. Nothing you type is uploaded to a server.</p>
+</header>
+<main>
+  <div class="grid">
+    <section class="card" aria-label="Add a memory">
+      <h2>Add a memory</h2>
+      <label for="memory">A memory, in your own words</label>
+      <textarea id="memory" placeholder="Example: The evening we walked home slowly after dinner, talking about nothing in particular."></textarea>
+      <label for="title">Give this constellation a name (optional)</label>
+      <input id="title" placeholder="Slow walk home">
+      <div>
+        <button id="create" type="button">Create my constellation</button>
+        <button id="sample" class="secondary" type="button">Try a sample memory</button>
+      </div>
+      <p class="small">Private by default: memories are stored only in this browser (localStorage).
+      Use “Clear all” to delete them. No account, no upload, no tracking in this prototype.</p>
+      <button id="export" class="secondary" type="button">Export current constellation (JSON)</button>
+      <button id="clear" class="secondary" type="button">Clear all saved memories</button>
+    </section>
+    <section class="card" aria-label="Your constellation">
+      <canvas id="sky" width="900" height="420" aria-label="A canvas showing your personal constellation"></canvas>
+      <h2 id="storyTitle">Your constellation will appear here</h2>
+      <p id="story" class="story">Add a memory, or try the sample, and Lunara will draw its stars.</p>
+      <p id="counts" class="meta"></p>
+    </section>
+  </div>
+  <section class="card" aria-label="Saved memories" style="margin-top:20px">
+    <h2>Saved constellations</h2>
+    <p class="small">Click one to open it again. Each constellation is generated deterministically from its own words, so the same memory always draws the same sky.</p>
+    <ul id="list" class="memories"></ul>
+  </section>
+</main>
+<footer>
+  <p class="small">Lunara prototype for the Meta AI Developer Hackathon (Startup Track, Build for Your World).
+  This is a working web prototype, not the iPhone app. The story text in this prototype is generated locally from
+  templates; a future version can plug in a hosted model through the adapter described in README.md.
+  No Meta API key is required to run it, and no claim is made about live Meta model usage in this build.</p>
+</footer>
+<script>
+  // Deterministic, dependency-free generation: the same words always make the same sky.
+  function hashText(text) {
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function rng(seed) {
+    let a = seed || 1;
+    return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  const canvas = document.getElementById('sky');
+  const ctx = canvas.getContext('2d');
+  const state = { items: [], current: null };
+  try { state.items = JSON.parse(localStorage.getItem('lunara-memories') || '[]'); } catch (e) { state.items = []; }
+
+  function save() { try { localStorage.setItem('lunara-memories', JSON.stringify(state.items)); } catch (e) {} renderList(); }
+  function storyFor(text, title) {
+    const words = text.trim().split(/\s+/).filter(Boolean);
+    const n = words.length;
+    const first = words[0] || 'this';
+    const last = words[words.length - 1] || 'moment';
+    return (title ? title + ' — ' : '') + 'A quiet sky made from ' + n + ' words. ' +
+      'It begins with “' + first + '” and settles on “' + last + '”. ' +
+      'Every star here is a small part of that evening, kept in order, so you can find your way back to it whenever you want to look up again.';
+  }
+  function draw(item) {
+    const rand = rng(hashText(item.text));
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    // Nebula wash: soft, deterministic colours from the same seed.
+    const hue = Math.floor(rand() * 360);
+    const grad = ctx.createRadialGradient(w * rand(), h * rand(), 10, w / 2, h / 2, w * 0.7);
+    grad.addColorStop(0, 'hsla(' + hue + ', 70%, 45%, 0.28)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+    const count = 14 + Math.floor(rand() * 10);
+    const stars = [];
+    for (let i = 0; i < count; i++) stars.push({ x: 40 + rand() * (w - 80), y: 30 + rand() * (h - 60), r: 1.5 + rand() * 3.2, a: 0.5 + rand() * 0.5 });
+    ctx.strokeStyle = 'rgba(190,205,255,0.55)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    stars.forEach((s, i) => { if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y); });
+    ctx.stroke();
+    stars.forEach(s => { ctx.beginPath(); ctx.fillStyle = 'rgba(255,255,255,' + s.a + ')'; ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill(); });
+    document.getElementById('storyTitle').textContent = item.title || 'Untitled constellation';
+    document.getElementById('story').textContent = storyFor(item.text, item.title);
+    document.getElementById('counts').textContent = stars.length + ' stars · ' + item.text.trim().split(/\s+/).filter(Boolean).length + ' words · saved only in this browser';
+    state.current = item;
+  }
+  function renderList() {
+    const list = document.getElementById('list');
+    list.innerHTML = '';
+    if (!state.items.length) { const li = document.createElement('li'); li.textContent = 'No saved constellations yet.'; list.appendChild(li); return; }
+    state.items.forEach(item => {
+      const li = document.createElement('li');
+      li.tabIndex = 0;
+      li.textContent = (item.title || 'Untitled') + ' — ' + item.text.slice(0, 80);
+      const open = () => draw(item);
+      li.addEventListener('click', open);
+      li.addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
+      list.appendChild(li);
+    });
+  }
+  document.getElementById('create').addEventListener('click', () => {
+    const text = document.getElementById('memory').value.trim();
+    if (!text) { document.getElementById('story').textContent = 'Please write a memory first — even one sentence is enough.'; return; }
+    const item = { title: document.getElementById('title').value.trim(), text, at: new Date().toISOString() };
+    state.items.unshift(item); save(); draw(item);
+  });
+  document.getElementById('sample').addEventListener('click', () => {
+    document.getElementById('memory').value = 'The evening we walked home slowly after dinner, talking about nothing in particular, while the sky turned quietly blue.';
+    document.getElementById('title').value = 'Slow walk home';
+    document.getElementById('create').click();
+  });
+  document.getElementById('export').addEventListener('click', () => {
+    if (!state.current) { document.getElementById('story').textContent = 'Create or open a constellation first, then export it.'; return; }
+    const blob = new Blob([JSON.stringify(state.current, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'lunara-constellation.json'; a.click(); URL.revokeObjectURL(a.href);
+  });
+  document.getElementById('clear').addEventListener('click', () => {
+    state.items = []; try { localStorage.removeItem('lunara-memories'); } catch (e) {}
+    renderList();
+    document.getElementById('storyTitle').textContent = 'Your constellation will appear here';
+    document.getElementById('story').textContent = 'All saved memories were deleted from this browser.';
+  });
+  renderList();
+  if (state.items.length) draw(state.items[0]);
+  // Respect reduced motion: this prototype animates nothing continuously, by design.
+</script>
+</body>
+</html>
